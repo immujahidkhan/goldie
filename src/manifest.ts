@@ -3,7 +3,6 @@ import {
   lstat,
   mkdir,
   readdir,
-  readFile,
   rm,
   stat,
   symlink,
