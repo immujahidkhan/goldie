@@ -14,7 +14,7 @@ goldie manifest
 goldie studio          # http://localhost:4321 — default "midnight" look
 ```
 
-Flows: `Ios/TCL-TV-Remote/.argent/flows/`  
+Flows: `./.argent/flows/` (in this goldie repo)  
 Output: `./out/screenshots/iphone-6.9/<locale>/`
 
 ## All 50 App Store locales
