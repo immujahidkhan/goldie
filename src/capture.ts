@@ -10,8 +10,16 @@ import {
 } from "./config.ts";
 import * as device from "./device.ts";
 import { imageSize } from "./image.ts";
+import { rawDirFor } from "./raw.ts";
 import { FlowFailure } from "./repair.ts";
 import { DEVICES, type DeviceKey } from "./specs.ts";
+
+export type CaptureOptions = {
+  /** Pin the simulator to this locale and write under out/raw/<device>/<locale>/. */
+  locale?: string;
+  /** Skip preview segment recording (used after the first locale in a batch). */
+  skipPreview?: boolean;
+};
 
 /**
  * A cold start after a reinstall can outrun argent's native-devtools handshake
@@ -37,15 +45,21 @@ export type CaptureManifest = {
   } | null;
 };
 
-export async function capture(cfg: LoadedConfig, deviceKey: DeviceKey): Promise<CaptureManifest> {
+export async function capture(
+  cfg: LoadedConfig,
+  deviceKey: DeviceKey,
+  options: CaptureOptions = {},
+): Promise<CaptureManifest> {
   const spec = DEVICES[deviceKey];
   const udid = await device.resolveUdid(deviceKey);
-  const rawDir = join(cfg.outDir, "raw", deviceKey);
+  const simLocale = options.locale ?? cfg.locales[0]!;
+  const rawDir = rawDirFor(cfg.outDir, deviceKey, options.locale);
   await mkdir(rawDir, { recursive: true });
 
   const app = appFor(cfg, deviceKey);
-  console.log(`> ${spec.simulatorName ?? spec.label} (${udid})`);
-  await device.prepare(deviceKey, udid, cfg.locales[0]!, cfg.appearance);
+  const localeTag = options.locale ? ` · ${options.locale}` : "";
+  console.log(`> ${spec.simulatorName ?? spec.label} (${udid})${localeTag}`);
+  await device.prepare(deviceKey, udid, simLocale, cfg.appearance);
   // A reinstall wipes app data, which is what makes a re-capture deterministic:
   // flows that create records start from the same empty state every run.
   await device.installApp(udid, app.path, app.id);
@@ -93,12 +107,14 @@ export async function capture(cfg: LoadedConfig, deviceKey: DeviceKey): Promise<
   }
 
   const previewScene = cfg.scenes.find(isPreview);
-  if (previewScene) {
+  if (previewScene && !options.skipPreview) {
     if (spec.preview) {
       manifest.preview = await captureSegments(cfg, previewScene, deviceKey, udid, rawDir, app.id);
     } else {
       console.log(`  ${deviceKey} has no preview pipeline; skipping segments`);
     }
+  } else if (previewScene && options.skipPreview) {
+    console.log(`  preview skipped (batch locale)`);
   }
 
   await writeFile(join(rawDir, "manifest.json"), JSON.stringify(manifest, null, 2));

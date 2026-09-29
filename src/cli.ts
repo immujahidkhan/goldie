@@ -25,6 +25,7 @@ goldie - App Store screenshots and previews, driven by argent
 
   goldie doctor     Check the toolchain, simulators, flags and flows
   goldie capture    Replay every scene flow and save raw captures
+                    (--all-locales: every config locale + in-app UI; --locale <code>: one)
   goldie frame      Composite raw screenshots into framed, captioned PNGs
   goldie preview    Join the raw clips into the preview video (App Store upload; YouTube for Play)
   goldie verify     Check finished assets against the store spec tables
@@ -36,7 +37,9 @@ goldie - App Store screenshots and previews, driven by argent
 Options
   --config <path>   Config file (default ./goldie.config.ts)
   --device <key>    Only this device key (default: every device in the config)
-  --locale <code>   Only this locale (default: every locale in the config)
+  --locale <code>   Only this locale (frame/preview/verify; capture pins sim to this locale)
+  --all-locales     capture: run once per config locale (frames each unless --no-frame)
+  --no-frame        With --all-locales, skip goldie frame after each locale
   --background <css>  Override theme.background for this run (also clears per-scene backgrounds); "transparent" keeps alpha
   --frame <variant>   Override the screenshot bezel variant for this run (17-pro-silver | 17-pro-blue | 17-pro-orange)
   --font <key>        Override theme.fontFamily for this run (system | ${FONT_KEYS.join(" | ")})
@@ -86,7 +89,11 @@ async function main() {
       return (await doctor(cfg)) ? 0 : 1;
 
     case "capture":
-      await runCapture(cfg, devices);
+      if (argv.includes("--all-locales")) {
+        await runCaptureAllLocales(cfg, devices, !argv.includes("--no-frame"));
+      } else {
+        await runCapture(cfg, devices, opt("locale"));
+      }
       return 0;
 
     case "frame":
@@ -145,15 +152,44 @@ function packageVersion(): string {
   return JSON.parse(readFileSync(pkg, "utf8")).version;
 }
 
-async function runCapture(cfg: LoadedConfig, devices: DeviceKey[]) {
+async function runCapture(cfg: LoadedConfig, devices: DeviceKey[], locale?: string) {
   for (const d of devices) {
     const udid = await device.resolveUdid(d);
     try {
-      await capture(cfg, d);
+      await capture(cfg, d, locale ? { locale } : {});
     } finally {
       // Leave the device as it was found; a pinned status bar is sticky.
       await device.clearStatusBar(d, udid);
     }
+  }
+}
+
+async function runCaptureAllLocales(
+  cfg: LoadedConfig,
+  devices: DeviceKey[],
+  frameAfterEach: boolean,
+) {
+  const locales = cfg.locales;
+  console.log(`capture all locales (${locales.length})`);
+  for (let i = 0; i < locales.length; i++) {
+    const locale = locales[i]!;
+    console.log(`\n[${i + 1}/${locales.length}] ${locale}`);
+    for (const d of devices) {
+      const udid = await device.resolveUdid(d);
+      try {
+        await capture(cfg, d, {
+          locale,
+          skipPreview: i > 0,
+        });
+        if (frameAfterEach) await renderScreenshots(cfg, d, locale);
+      } finally {
+        await device.clearStatusBar(d, udid);
+      }
+    }
+  }
+  if (frameAfterEach) {
+    console.log("\nmanifest");
+    await writeManifest(cfg);
   }
 }
 

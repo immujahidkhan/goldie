@@ -62,6 +62,8 @@
     "all": "bun src/cli.ts all",
     "studio": "bun src/cli.ts manifest && cd studio && bun install --silent && bun run dev",
     "studio:build": "bun run build:studio",
+    "storefronts": "bash scripts/render-storefronts.sh",
+    "capture:locales": "bun src/cli.ts capture --all-locales",
     "format": "biome format --write .",
     "lint": "biome lint .",
     "check": "biome check --write .",

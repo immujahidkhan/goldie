@@ -12,6 +12,7 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import type { CaptureManifest } from "./capture.ts";
+import { readCaptureManifest as readRawManifest } from "./raw.ts";
 import {
   type Decoration,
   deviceFrame,
@@ -213,17 +214,19 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
 
   const captures: StoreManifest["design"]["captures"] = {};
   for (const deviceKey of cfg.devices) {
-    const raw = await readCaptureManifest(cfg, deviceKey);
-    if (!raw) continue;
+    const studioLocale = cfg.locales[0]!;
+    const raw = await readRawManifest(cfg.outDir, deviceKey, studioLocale);
+    if (!raw || raw.screenshots.length === 0) continue;
+    const rawBase = `${relative(cfg.outDir, dirname(raw.screenshots[0]!.file)).replace(/\\/g, "/")}/`;
     captures[deviceKey] = {
       screenshots: raw.screenshots.map((s) => ({
         sceneId: s.sceneId,
-        url: `raw/${deviceKey}/${basename(s.file)}`,
+        url: `${rawBase}${basename(s.file)}`,
       })),
       clips: raw.preview
         ? raw.preview.clips.map((c) => ({
             segmentId: c.segmentId,
-            url: `raw/${deviceKey}/${basename(c.file)}`,
+            url: `${rawBase}${basename(c.file)}`,
             durationSeconds: c.durationSeconds,
           }))
         : null,
@@ -276,17 +279,6 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
   const file = join(webDir, "store.json");
   await writeFile(file, JSON.stringify(manifest, null, 2));
   return file;
-}
-
-async function readCaptureManifest(
-  cfg: LoadedConfig,
-  deviceKey: DeviceKey,
-): Promise<CaptureManifest | null> {
-  try {
-    return JSON.parse(await readFile(join(cfg.outDir, "raw", deviceKey, "manifest.json"), "utf8"));
-  } catch {
-    return null;
-  }
 }
 
 async function collect(

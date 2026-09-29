@@ -21,15 +21,20 @@ import { execOrThrow } from "./exec.ts";
 import { registerFonts, withGlyphFallback } from "./fonts.ts";
 import { pngInfo } from "./image.ts";
 import { BADGE, type Composition, compose, SCREEN_SHADOW, TYPE } from "./layouts.ts";
+import { readCaptureManifest } from "./raw.ts";
 import { DEVICES, type DeviceKey, PREVIEW, SCREENSHOT_PIXEL_FORMAT } from "./specs.ts";
 
-async function readManifest(cfg: LoadedConfig, deviceKey: DeviceKey): Promise<CaptureManifest> {
-  const file = join(cfg.outDir, "raw", deviceKey, "manifest.json");
-  try {
-    return JSON.parse(await readFile(file, "utf8"));
-  } catch {
-    throw new Error(`No capture manifest at ${file}. Run: goldie capture`);
-  }
+async function readManifest(
+  cfg: LoadedConfig,
+  deviceKey: DeviceKey,
+  locale: string,
+): Promise<CaptureManifest> {
+  const manifest = await readCaptureManifest(cfg.outDir, deviceKey, locale);
+  if (manifest) return manifest;
+  throw new Error(
+    `No capture for locale "${locale}" under ${cfg.outDir}/raw/${deviceKey}/. ` +
+      `Run: goldie capture --locale ${locale}  (or: goldie capture --all-locales)`,
+  );
 }
 
 /**
@@ -42,7 +47,7 @@ async function readManifest(cfg: LoadedConfig, deviceKey: DeviceKey): Promise<Ca
  */
 export async function renderScreenshots(cfg: LoadedConfig, deviceKey: DeviceKey, locale: string) {
   const spec = DEVICES[deviceKey];
-  const manifest = await readManifest(cfg, deviceKey);
+  const manifest = await readManifest(cfg, deviceKey, locale);
   // Releases before 0.3 keyed this dir by spec.label; a stale label dir
   // would otherwise ride along into the export zip.
   if (spec.label !== deviceKey)
@@ -480,7 +485,7 @@ export async function renderPreview(cfg: LoadedConfig, deviceKey: DeviceKey, loc
     console.log(`  ${deviceKey} has no preview pipeline`);
     return null;
   }
-  const manifest = await readManifest(cfg, deviceKey);
+  const manifest = await readManifest(cfg, deviceKey, locale);
   if (!manifest.preview)
     throw new Error("No preview clips in the capture manifest. Run: goldie capture");
 
