@@ -64,7 +64,9 @@ goldie studio     Preview and tweak the assets in the browser
 The output goes to `out/screenshots/<device>/<locale>/` and
 `out/previews/<device>/<locale>/`. The iPhone gets 1320 x 2868 screenshots
 and an 886 x 1920 H.264 preview. Google Play gets 1080 x 1920 screenshots.
-A preview must run 15 to 30 seconds.
+A preview must run 15 to 30 seconds. Add `"ipad-13"` to `devices` for
+13" iPad screenshots (2064 x 2752) and a 1200 x 1600 preview from the same
+flows, each device with its own bezels, captures and output folder.
 
 ## Google Play
 
@@ -101,14 +103,31 @@ The studio switches devices, backgrounds, templates, bezel, fonts and
 per-tile copy. It saves the choices to `goldie.design.json`, so the CLI
 renders the same result. The config also takes:
 
-- `frame`: `17-pro-blue`, `17-pro-silver`, `17-pro-orange`, or a custom
-  bezel image; `theme.screenOnly: true` removes it.
+- `frame`: `17-pro-blue`, `17-pro-silver`, `17-pro-orange` for the iPhone,
+  `ipad-pro-13-silver`, `ipad-pro-13-space-gray` for the iPad (one variant,
+  or one per device key), or a custom bezel image; `theme.screenOnly: true`
+  removes it.
 - `theme.template`: `editorial`, `showcase`, `magazine`, `storyboard`,
   `dynamic`, or your own layout sequence from `classic`, `copy-below`, `hero`,
   `offset`, `tilt`, `tilt-right`, `duo`, `duo-tilt`, `panorama`,
   `panorama-duo`, `minimal`.
 - `theme.fontFamily`: a CSS font stack. Merriweather, DM Mono, Lato, DM Sans,
-  Montserrat and Noto Sans SC (Simplified Chinese) are bundled.
+  Montserrat, Noto Sans SC (Simplified Chinese) and Noto Sans Arabic are
+  bundled; the two Noto faces are also appended to every stack as a per-glyph
+  fallback, so Chinese and Arabic copy draws whatever font you name.
+- `theme.fontFiles`: typefaces of your own, registered alongside the bundled
+  ones so `fontFamily` can name them. Needed for a brand font, and for any
+  script the bundled families do not cover - the copy is drawn with skia, not a
+  browser, so an unregistered family exports as tofu boxes rather than falling
+  back. Paths are relative to the config.
+
+  ```ts
+  fontFiles: [
+    { family: "Zain", files: { 400: "../assets/fonts/Zain-Regular.ttf",
+                               700: "../assets/fonts/Zain-Bold.ttf" } },
+  ],
+  fontFamily: "Zain",
+  ```
 - `decorations`: badges or images layered behind the device.
 
 ## Remarks

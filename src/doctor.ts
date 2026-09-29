@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import * as argent from "./argent.ts";
 import { flowPath, type LoadedConfig } from "./config.ts";
@@ -12,6 +12,9 @@ const FFMPEG_INSTALL =
     : process.platform === "win32"
       ? "winget install ffmpeg   (or choco install ffmpeg), then reopen the terminal"
       : "sudo apt install ffmpeg   (or your distro's package)";
+
+/** A `- launch:` step anywhere in a flow's YAML. */
+const LAUNCH_STEP = /^\s*-\s*launch:/m;
 
 type Check = { name: string; ok: boolean; detail: string; fix?: string; warnOnly?: boolean };
 
@@ -169,12 +172,25 @@ export async function doctor(cfg: LoadedConfig): Promise<boolean> {
     const flows = scene.kind === "preview" ? scene.segments.map((s) => s.flow) : [scene.flow];
     for (const f of flows) {
       const path = flowPath(cfg, f);
+      const exists = existsSync(path);
       checks.push({
         name: `flow ${f}`,
-        ok: existsSync(path),
+        ok: exists,
         detail: path,
         fix: "Record or author it under the flows dir, or fix the name in goldie.config.ts",
       });
+      // capture restarts the app before the first segment. A launch step inside
+      // a segment restarts it again mid-recording, filming the home screen and
+      // a cold start.
+      if (scene.kind === "preview" && exists && LAUNCH_STEP.test(readFileSync(path, "utf8"))) {
+        checks.push({
+          name: `segment ${f}`,
+          ok: false,
+          warnOnly: true,
+          detail: "has a launch: step, which restarts the app on camera",
+          fix: "Drop the launch: step and state the starting screen in executionPrerequisite",
+        });
+      }
     }
   }
 

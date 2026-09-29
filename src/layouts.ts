@@ -6,7 +6,7 @@
  * the exported PNG identical. Every number that shapes a composition lives
  * here; neither renderer carries geometry or type sizes of its own.
  */
-import { FRAME } from "./frame.ts";
+import { FRAME, type FrameGeometry } from "./frame.ts";
 
 export const LAYOUT_KEYS = [
   "classic",
@@ -321,6 +321,8 @@ export type Composition = {
     /** Top of the block when `position` is "top", its bottom edge when "bottom". */
     y: number;
     maxWidth: number;
+    /** Width the headline and subhead sizes are fractions of (TYPE). */
+    typeWidth: number;
     /** The block's box, for the DOM twin. */
     box: Rect;
   } | null;
@@ -334,7 +336,8 @@ export type Composition = {
 
 /**
  * Pixel geometry for a layout on a tile of the given size. `screenOnly`
- * drops the bezel: the device box becomes the bare screen cutout.
+ * drops the bezel: the device box becomes the bare screen cutout. `geom` is
+ * the device's bezel geometry (FRAMES in frame.ts); the iPhone's by default.
  */
 /**
  * Every layout fraction was tuned on the App Store 6.9" tile (1320x2868). A
@@ -344,19 +347,11 @@ export type Composition = {
  */
 const REF_TILE_ASPECT = 1320 / 2868;
 
-/** Bezel art geometry: the image box, the screen cutout inside it, its corner radius. */
-export type FrameGeometry = {
-  width: number;
-  height: number;
-  screen: { x: number; y: number; width: number; height: number };
-  screenRadius: number;
-};
-
 export function compose(
   spec: LayoutSpec,
   tileIn: { width: number; height: number },
   theme: { copyHeightRatio: number; deviceWidthRatio: number },
-  opts: { screenOnly?: boolean; geom?: FrameGeometry } = {},
+  opts: { screenOnly?: boolean; geom?: FrameGeometry; copyScale?: number } = {},
 ): Composition {
   const geom = opts.geom ?? FRAME;
   const tile =
@@ -376,7 +371,13 @@ export function compose(
       ? 0
       : tile.height * (isClassic ? theme.copyHeightRatio : (spec.copy.heightRatio ?? 0.24));
   const padX = tile.width * TYPE.padX;
-  const maxWidth = spec.copy.widthRatio ? tile.width * spec.copy.widthRatio : tile.width - 2 * padX;
+  // Type sizes follow the reference column (times opts.copyScale, which a
+  // wide device raises), but the copy wraps across the
+  // real tile's width, so a wide tile (the iPad's 3:4) sets its headline on
+  // fewer lines instead of in a narrow strip down the middle.
+  const maxWidth =
+    (spec.copy.widthRatio ? tile.width * spec.copy.widthRatio : tile.width - 2 * padX) +
+    (tileIn.width - tile.width);
 
   let copy: Composition["copy"] = null;
   if (spec.copy.position !== "none") {
@@ -398,6 +399,7 @@ export function compose(
       x: x + copyDx,
       y: spec.copy.position === "top" ? height * TYPE.padTop : height - height * TYPE.padBottom,
       maxWidth,
+      typeWidth: tile.width * (opts.copyScale ?? 1),
       box: { left: boxLeft + copyDx, top, width: maxWidth, height: copyHeight },
     };
   }

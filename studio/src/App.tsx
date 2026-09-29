@@ -1,13 +1,20 @@
-import { CameraIcon, type LucideIcon, SmartphoneIcon, TriangleAlertIcon } from "lucide-react";
+import {
+  CameraIcon,
+  type LucideIcon,
+  SmartphoneIcon,
+  TabletIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { EmptyState } from "./components/EmptyState";
 import { Sidebar } from "./components/Sidebar";
-import { Strip } from "./components/Strip";
+import { Strip, type StripView } from "./components/Strip";
 import { useHistory } from "./lib/useHistory";
 import {
   type BundledFont,
   type Design,
   type DeviceEntry,
+  type DeviceType,
   loadDesign,
   loadManifest,
   ManifestError,
@@ -20,22 +27,28 @@ import {
 /** Sentinel for the config's own layout sequence, which the studio can show but not edit. */
 export const CUSTOM_TEMPLATE = "__custom__";
 
-export type Platform = "ios" | "android";
+const DEVICE_TYPES: DeviceType[] = ["iphone", "ipad", "android"];
 
 /**
- * Shown when a store's tab is selected but its device is not in the config.
- * The chip holds the ask to hand a coding agent, which knows the config
- * changes and capture steps from the goldie skill.
+ * Shown when a device-type tab is selected but its device is not in the
+ * config. The chip holds the ask to hand a coding agent, which knows the
+ * config changes and capture steps from the goldie skill.
  */
-const ENABLE_PLATFORM: Record<
-  Platform,
+const ENABLE_DEVICE_TYPE: Record<
+  DeviceType,
   { icon: LucideIcon; title: string; body: string; command: string }
 > = {
-  ios: {
+  iphone: {
     icon: SmartphoneIcon,
     title: "No App Store screenshots yet",
     body: "Ask your coding agent to set them up:",
     command: "create App Store screenshots using goldie",
+  },
+  ipad: {
+    icon: TabletIcon,
+    title: "No iPad screenshots yet",
+    body: 'Add "ipad-13" to devices in goldie.config.ts, or ask your coding agent:',
+    command: "add iPad screenshots using goldie",
   },
   android: {
     icon: SmartphoneIcon,
@@ -82,33 +95,33 @@ export function App() {
  * layout and screen-only mode, per-scene layout overrides, copy edited in the
  * lightbox, the order tiles were dragged into)
  * are written to goldie.design.json next to the config, debounced, so the
- * CLI picks them up too. The view choices (platform, device, locale, dark) only matter
- * here and live in localStorage under the app's name. Either falls back to
+ * CLI picks them up too. The view choices (device type, device, locale, dark) only matter
+ * here and live in localStorage under the app's name, as does the strip view. Either falls back to
  * the config when a stored value no longer applies (a device or frame
  * variant removed from the config, for instance).
  */
 function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesign }) {
   const design = manifest.design;
   const view = loadView(manifest.app.name);
-  // Both store tabs render even when only one platform is configured, so the
-  // platform is view state of its own: an unconfigured tab has no device key
-  // to derive it from.
-  const initialPlatform: Platform =
-    view.platform === "ios" || view.platform === "android"
-      ? view.platform
-      : (manifest.devices.find((d) => d.key === view.device)?.platform ??
-        manifest.devices[0]?.platform ??
-        "ios");
-  const [platform, setPlatform] = useState(initialPlatform);
+  // Every device-type tab renders even when only one is configured, so the
+  // type is view state of its own: an unconfigured tab has no device key to
+  // derive it from. Sessions saved before the iPad tab stored the platform
+  // instead; its "ios" is no type, so the saved device picks the tab then.
+  const initialType: DeviceType = isDeviceType(view.platform)
+    ? view.platform
+    : (manifest.devices.find((d) => d.key === view.device)?.type ??
+      manifest.devices[0]?.type ??
+      "iphone");
+  const [deviceType, setDeviceType] = useState(initialType);
   const [device, setDevice] = useState(() => {
-    const devices = manifest.devices.filter((d) => d.platform === initialPlatform);
+    const devices = manifest.devices.filter((d) => d.type === initialType);
     return devices.some((d) => d.key === view.device)
       ? (view.device as string)
       : (devices[0]?.key ?? manifest.devices[0]?.key ?? "");
   });
-  const selectPlatform = (p: Platform) => {
-    setPlatform(p);
-    const devices = manifest.devices.filter((d) => d.platform === p);
+  const selectDeviceType = (t: DeviceType) => {
+    setDeviceType(t);
+    const devices = manifest.devices.filter((d) => d.type === t);
     if (devices.length > 0 && !devices.some((d) => d.key === device)) setDevice(devices[0]!.key);
   };
   const [locale, setLocale] = useState(
@@ -119,14 +132,12 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
   const [dark, setDark] = useState(
     new URLSearchParams(window.location.search).get("dark") === "1" || view.dark === true,
   );
+  const [stripView, setStripView] = useState<StripView>(view.view === "grid" ? "grid" : "strip");
   const knownLayout = (key: string | undefined) =>
     key && design.layouts.some((l) => l.key === key) ? key : undefined;
   const { state, set } = useHistory<DesignState>(() => ({
     background: saved.background ?? design.theme.background,
-    frame:
-      saved.frame && design.frameVariants.includes(saved.frame)
-        ? saved.frame
-        : (design.frameVariant ?? ""),
+    frames: initialFrames(design, saved),
     fontFamily: saved.fontFamily ?? design.theme.fontFamily,
     copy: saved.copy ?? {},
     layout: knownLayout(saved.layout) ?? design.layout,
@@ -135,8 +146,17 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
     sceneLayouts: initialSceneLayouts(design, saved, knownLayout),
     order: initialOrder(design, saved),
   }));
-  const { background, frame, fontFamily, copy, layout, template, screenOnly, sceneLayouts, order } =
-    state;
+  const {
+    background,
+    frames,
+    fontFamily,
+    copy,
+    layout,
+    template,
+    screenOnly,
+    sceneLayouts,
+    order,
+  } = state;
   // Each setter names its field so a burst of edits to one control (a drag
   // on the gradient picker) collapses into a single undo step.
   const field =
@@ -144,7 +164,10 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
     (value: DesignState[K]) =>
       set(key, (prev) => ({ ...prev, [key]: value }));
   const setBackground = field("background");
-  const setFrame = field("frame");
+  // The frame picker edits the variant of the device on show; "" means custom art.
+  const frame = frames[device] ?? "";
+  const setFrame = (value: string) =>
+    set(`frame:${device}`, (prev) => ({ ...prev, frames: { ...prev.frames, [device]: value } }));
   const setFontFamily = field("fontFamily");
   const setLayout = field("layout");
   // Picking a template replaces the strip's layout sequence, so any per-scene
@@ -174,8 +197,8 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
     }));
 
   useEffect(() => {
-    storeView(manifest.app.name, { platform, device, locale, dark });
-  }, [manifest.app.name, platform, device, locale, dark]);
+    storeView(manifest.app.name, { platform: deviceType, device, locale, dark, view: stripView });
+  }, [manifest.app.name, deviceType, device, locale, dark, stripView]);
 
   // Write the design to disk once it has sat still for a moment; a drag on
   // the gradient picker fires many changes a second. Skips the initial mount
@@ -189,9 +212,10 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
       return;
     }
     const timer = setTimeout(() => {
+      const chosen = Object.fromEntries(Object.entries(frames).filter(([, v]) => v));
       saveDesign({
         background,
-        frame: frame || undefined,
+        frames: Object.keys(chosen).length > 0 ? chosen : undefined,
         fontFamily,
         copy: Object.keys(copy).length > 0 ? copy : undefined,
         order: order.length > 0 ? order : undefined,
@@ -205,7 +229,7 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
       );
     }, SAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [background, frame, fontFamily, copy, order, template, layout, screenOnly, sceneLayouts]);
+  }, [background, frames, fontFamily, copy, order, template, layout, screenOnly, sceneLayouts]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -219,35 +243,41 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
     return () => style.remove();
   }, [design.fonts]);
 
-  // The exporter appends the bundled CJK typeface as a per-glyph fallback, so
-  // the preview does the same; otherwise the browser would silently substitute
-  // a system font for characters the chosen stack cannot draw. Only the bare
-  // stack is saved to goldie.design.json.
-  const cjk = design.fonts.find((f) => f.key === "noto-sans-sc");
-  const previewFontFamily =
-    cjk && !fontFamily.includes(cjk.family) ? `${fontFamily}, "${cjk.family}"` : fontFamily;
+  // The exporter appends the bundled fallback typefaces as per-glyph last
+  // resorts, so the preview does the same; otherwise the browser would silently
+  // substitute a system font for characters the chosen stack cannot draw - and
+  // the preview would look right where the export does not. Only the bare stack
+  // is saved to goldie.design.json.
+  const previewFontFamily = ["noto-sans-sc", "noto-sans-arabic"].reduce((stack, key) => {
+    const font = design.fonts.find((f) => f.key === key);
+    return font && !stack.includes(font.family) ? `${stack}, "${font.family}"` : stack;
+  }, fontFamily);
 
-  const platformDevices = manifest.devices.filter((d) => d.platform === platform);
-  const spec = platformDevices.find((d) => d.key === device) ?? platformDevices[0];
+  const typeDevices = manifest.devices.filter((d) => d.type === deviceType);
+  const spec = typeDevices.find((d) => d.key === device) ?? typeDevices[0];
   const captures = spec ? design.captures[spec.key] : undefined;
+  const firstVariant = design.frameVariants.find((v) => v.device === device)?.key;
   const frameUrl = frame
     ? `frames/${frame}.png`
-    : (design.customFrameUrl ?? `frames/${design.frameVariants[0]}.png`);
+    : (design.customFrameUrl ?? `frames/${firstVariant ?? design.frameVariants[0]?.key}.png`);
 
   return (
     <div className="flex h-full bg-stage p-3 text-foreground">
       <Sidebar
         manifest={manifest}
-        platform={platform}
+        deviceType={deviceType}
         device={device}
         locale={locale}
         dark={dark}
-        onPlatform={selectPlatform}
+        onDeviceType={selectDeviceType}
         onDevice={setDevice}
         onLocale={setLocale}
         onDark={setDark}
+        view={stripView}
+        onView={setStripView}
         background={background}
         frame={frame}
+        frames={frames}
         fontFamily={fontFamily}
         template={template}
         layout={layout}
@@ -261,7 +291,7 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <main className="relative grid flex-1 place-items-center overflow-auto p-10">
+        <main className="relative grid min-h-0 flex-1 place-items-center-safe overflow-auto p-10">
           {spec && captures ? (
             <div className="w-full max-w-[1400px]">
               <Strip
@@ -285,6 +315,7 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
                 screenOnly={screenOnly}
                 sceneLayouts={sceneLayouts}
                 onSceneLayout={setSceneLayout}
+                view={stripView}
               />
             </div>
           ) : spec ? (
@@ -295,7 +326,7 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
               command="goldie capture && goldie manifest"
             />
           ) : (
-            <EmptyState {...ENABLE_PLATFORM[platform]} />
+            <EmptyState {...ENABLE_DEVICE_TYPE[deviceType]} />
           )}
         </main>
       </div>
@@ -308,7 +339,8 @@ function Loaded({ manifest, saved }: { manifest: StoreManifest; saved: SavedDesi
 /** Everything the undo stack tracks: the design choices saved to goldie.design.json. */
 type DesignState = {
   background: string;
-  frame: string;
+  /** Bezel variant per device key; "" or absent means the config's custom art. */
+  frames: Record<string, string>;
   fontFamily: string;
   copy: Record<string, SceneCopy>;
   layout: string;
@@ -320,6 +352,23 @@ type DesignState = {
   /** Screenshot scene ids as arranged by dragging tiles; empty means the config's order. */
   order: string[];
 };
+
+/** The saved variant per device when it is drawn for that device, else the config's. */
+function initialFrames(design: Design, saved: SavedDesign): Record<string, string> {
+  const known = (device: string, key: string | undefined) =>
+    key && design.frameVariants.some((v) => v.key === key && v.device === device) ? key : undefined;
+  const out: Record<string, string> = {};
+  for (const [device, variant] of Object.entries(design.frames)) {
+    const legacy = design.frameVariants.find((v) => v.key === saved.frame)?.device;
+    const pick =
+      known(device, saved.frames?.[device]) ??
+      (legacy === device ? saved.frame : undefined) ??
+      variant ??
+      "";
+    out[device] = pick;
+  }
+  return out;
+}
 
 function initialTemplate(design: Design, saved: SavedDesign): string {
   if (saved.template !== undefined && design.templates.some((t) => t.key === saved.template))
@@ -359,9 +408,20 @@ function Toast({ message }: { message: string }) {
   );
 }
 
-type SavedView = { platform?: string; device?: string; locale?: string; dark?: boolean };
+type SavedView = {
+  /** A DeviceType; older sessions stored the platform ("ios" | "android") here. */
+  platform?: string;
+  device?: string;
+  locale?: string;
+  dark?: boolean;
+  view?: string;
+};
 
 const storageKey = (appName: string) => `goldie-studio:${appName}`;
+
+function isDeviceType(value: string | undefined): value is DeviceType {
+  return DEVICE_TYPES.includes(value as DeviceType);
+}
 
 function loadView(appName: string): SavedView {
   try {

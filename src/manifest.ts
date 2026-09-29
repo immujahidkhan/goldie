@@ -11,24 +11,26 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
-import type { CaptureManifest } from "./capture.ts";
 import { readCaptureManifest as readRawManifest } from "./raw.ts";
 import {
   type Decoration,
   deviceFrame,
   FRAME_VARIANTS,
   framePath,
+  frameVariantFor,
   isPreview,
   isScreenshot,
   type LoadedConfig,
   type Theme,
+  VARIANT_DEVICE,
   variantFramePath,
 } from "./config.ts";
 import { execOrThrow } from "./exec.ts";
-import { FONTS, fontFilePath } from "./fonts.ts";
+import { CUSTOM_FONT_FALLBACK, FONTS, fontFilePath } from "./fonts.ts";
+import type { FrameGeometry } from "./frame.ts";
 import { imageSize } from "./image.ts";
-import { type FrameGeometry, LAYOUTS, TEMPLATES } from "./layouts.ts";
-import { DEVICES, type DeviceKey } from "./specs.ts";
+import { LAYOUTS, TEMPLATES } from "./layouts.ts";
+import { DEVICES, type DeviceKey, type DeviceType } from "./specs.ts";
 
 /**
  * `out/web/` - the studio's static root. It holds the manifest, the
@@ -58,6 +60,8 @@ export type StoreManifest = {
     key: DeviceKey;
     label: string;
     platform: "ios" | "android";
+    type: DeviceType;
+    copyScale: number;
     simulatorName: string | null;
     screenshot: { width: number; height: number };
     preview: { width: number; height: number } | null;
@@ -74,10 +78,11 @@ export type StoreManifest = {
   /** Everything the studio needs to composite scenes in the browser. */
   design: {
     theme: Theme;
-    /** null when the config points at custom bezel art. */
-    frameVariant: string | null;
-    frameVariants: string[];
-    /** Url of the config's custom bezel art; null when a bundled variant is used. */
+    /** The bundled variant each device renders with; null when the config points at custom bezel art. */
+    frames: Record<string, string | null>;
+    /** Every bundled variant and the device it is drawn for. */
+    frameVariants: Array<{ key: string; device: string }>;
+    /** Url of the config's custom bezel art; null when bundled variants are used. */
     customFrameUrl: string | null;
     /** Bundled typefaces, with the @font-face sources the studio declares. */
     fonts: Array<{
@@ -150,11 +155,15 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
   // frames never waits on a server.
   const framesDir = join(webDir, "frames");
   await mkdir(framesDir, { recursive: true });
+  const frameVariants: StoreManifest["design"]["frameVariants"] = [];
   for (const variant of FRAME_VARIANTS) {
     await copyFile(variantFramePath(variant), join(framesDir, `${variant}.png`));
+    frameVariants.push({ key: variant, device: VARIANT_DEVICE[variant] });
   }
   const custom = "variant" in cfg.frame ? null : "frames/custom.png";
   if (custom) await copyFile(framePath(cfg), join(webDir, custom));
+  const frames: StoreManifest["design"]["frames"] = {};
+  for (const device of cfg.devices) frames[device] = frameVariantFor(cfg, device);
 
   // Bezel art a device brings itself, copied under its device key: the
   // android Pixel art, which the frame picker does not apply to.
@@ -178,6 +187,27 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
       faces.push({ weight: Number(weight), url: `fonts/${file}` });
     }
     fonts.push({ key, family: font.family, fallback: font.fallback, faces });
+  }
+
+  // Typefaces the config brought with it, copied next to the bundled ones so the
+  // studio's preview and the exported PNGs use the same cuts. Without this the
+  // browser would fall back to a system face and the studio would disagree with
+  // the export for exactly the scripts theme.fontFiles exists to support.
+  for (const [i, font] of (cfg.theme.fontFiles ?? []).entries()) {
+    const faces: Array<{ weight: number; url: string }> = [];
+    for (const [weight, file] of Object.entries(font.files)) {
+      // A family is free text: it may hold a "/" or match a bundled file's
+      // name, and two may share a slug, hence the prefix and the index.
+      const name = `custom-${i}-${slug(font.family)}-${weight}${extname(file)}`;
+      await copyFile(file, join(fontsDir, name));
+      faces.push({ weight: Number(weight), url: `fonts/${name}` });
+    }
+    fonts.push({
+      key: font.family,
+      family: font.family,
+      fallback: CUSTOM_FONT_FALLBACK,
+      faces,
+    });
   }
 
   // Decoration images, copied so the browser can draw the same layers.
@@ -241,6 +271,8 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
       key,
       label: DEVICES[key].label,
       platform: DEVICES[key].platform,
+      type: DEVICES[key].type,
+      copyScale: DEVICES[key].copyScale ?? 1,
       simulatorName: DEVICES[key].simulatorName ?? null,
       screenshot: DEVICES[key].screenshot,
       preview: DEVICES[key].preview,
@@ -250,8 +282,8 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
     assets,
     design: {
       theme: cfg.theme,
-      frameVariant: "variant" in cfg.frame ? cfg.frame.variant : null,
-      frameVariants: [...FRAME_VARIANTS],
+      frames,
+      frameVariants,
       customFrameUrl: custom,
       fonts,
       layouts: Object.values(LAYOUTS).map(({ key, label, description, span }) => ({
@@ -279,6 +311,16 @@ export async function writeManifest(cfg: LoadedConfig): Promise<string> {
   const file = join(webDir, "store.json");
   await writeFile(file, JSON.stringify(manifest, null, 2));
   return file;
+}
+
+/** A font family as a safe file-name segment. */
+function slug(family: string): string {
+  return (
+    family
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "font"
+  );
 }
 
 async function collect(

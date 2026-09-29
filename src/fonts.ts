@@ -51,6 +51,11 @@ export const FONTS = {
     fallback: '"PingFang SC", "Microsoft YaHei", sans-serif',
     files: { 400: "NotoSansSC-400.otf", 700: "NotoSansSC-700.otf" },
   },
+  "noto-sans-arabic": {
+    family: "Noto Sans Arabic",
+    fallback: '"Geeza Pro", "Segoe UI", sans-serif',
+    files: { 400: "NotoSansArabic-400.ttf", 700: "NotoSansArabic-700.ttf" },
+  },
 } as const satisfies Record<string, BundledFont>;
 
 export type FontKey = keyof typeof FONTS;
@@ -65,14 +70,22 @@ export function fontFilePath(file: string): string {
   return resolve(FONTS_DIR, file);
 }
 
-/** The `theme.fontFamily` value for a bundled font, or the system stack for "system". */
-export function fontStack(key: string): string {
+/** Generic fallback behind a config-supplied family, in the canvas and the studio alike. */
+export const CUSTOM_FONT_FALLBACK = "sans-serif";
+
+/**
+ * The `theme.fontFamily` value for a bundled font, or the system stack for
+ * "system". A family the config supplies itself (`theme.fontFiles`) is a valid
+ * key too: the studio's font picker lists those and exports with `--font <family>`.
+ */
+export function fontStack(key: string, custom: CustomFont[] = []): string {
   if (key === "system") return SYSTEM_FONT;
   const font = (FONTS as Record<string, BundledFont>)[key];
-  if (!font) {
-    throw new Error(`Unknown font "${key}". Available: system, ${FONT_KEYS.join(", ")}`);
-  }
-  return `"${font.family}", ${font.fallback}`;
+  if (font) return `"${font.family}", ${font.fallback}`;
+  const own = custom.find((f) => f.family === key);
+  if (own) return `"${own.family}", ${CUSTOM_FONT_FALLBACK}`;
+  const available = ["system", ...FONT_KEYS, ...custom.map((f) => f.family)];
+  throw new Error(`Unknown font "${key}". Available: ${available.join(", ")}`);
 }
 
 /**
@@ -83,19 +96,59 @@ export function fontStack(key: string): string {
  * chosen face and only characters the stack cannot draw reach the fallback.
  */
 export function withGlyphFallback(stack: string): string {
-  const cjk = FONTS["noto-sans-sc"].family;
-  return stack.includes(cjk) ? stack : `${stack}, "${cjk}"`;
+  for (const key of GLYPH_FALLBACKS) {
+    const { family } = FONTS[key];
+    if (!stack.includes(family)) stack = `${stack}, "${family}"`;
+  }
+  return stack;
 }
 
-let registered = false;
+/**
+ * The bundled faces appended to every canvas font string, in order, as a
+ * per-glyph last resort. Skia falls through per glyph, so latin text keeps the
+ * chosen face and only characters the stack cannot draw reach these.
+ */
+const GLYPH_FALLBACKS = ["noto-sans-sc", "noto-sans-arabic"] as const;
 
-/** Makes every bundled font available to the canvas. Safe to call repeatedly. */
-export function registerFonts() {
-  if (registered) return;
-  registered = true;
-  for (const font of Object.values(FONTS)) {
+/**
+ * A typeface the config supplies itself (`theme.fontFiles`), rather than one of
+ * the bundled ones. `files` holds absolute paths by weight, resolved from the
+ * config's directory when the config is loaded.
+ */
+export type CustomFont = {
+  family: string;
+  files: Record<number, string>;
+};
+
+let registered = false;
+const registeredCustom = new Set<string>();
+
+/**
+ * Makes every bundled font available to the canvas, plus any the config brought
+ * with it. Safe to call repeatedly: each file is registered once.
+ */
+export function registerFonts(custom: CustomFont[] = []) {
+  if (!registered) {
+    registered = true;
+    for (const font of Object.values(FONTS)) {
+      for (const file of Object.values(font.files)) {
+        GlobalFonts.registerFromPath(fontFilePath(file), font.family);
+      }
+    }
+  }
+  for (const font of custom) {
     for (const file of Object.values(font.files)) {
-      GlobalFonts.registerFromPath(fontFilePath(file), font.family);
+      const key = `${font.family}\u0000${file}`;
+      if (registeredCustom.has(key)) continue;
+      if (!GlobalFonts.registerFromPath(file, font.family)) {
+        throw new Error(
+          `Could not register font file "${file}" as "${font.family}". ` +
+            `Check theme.fontFiles in the config: the path is resolved against ` +
+            `the config file, and the file must be a format skia can read (ttf, otf).`,
+        );
+      }
+      // Only once it succeeded, so a caught failure throws again on the next call.
+      registeredCustom.add(key);
     }
   }
 }

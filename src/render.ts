@@ -64,7 +64,7 @@ export async function renderScreenshots(cfg: LoadedConfig, deviceKey: DeviceKey,
   const { image, geom } = deviceFrame(cfg, deviceKey);
   const screenOnly = Boolean(cfg.theme.screenOnly || spec.screenOnly);
   const bezel = screenOnly ? null : await loadImage(image);
-  registerFonts();
+  registerFonts(cfg.theme.fontFiles);
 
   const tile = spec.screenshot;
   const findShot = (sceneId: string) => {
@@ -85,7 +85,7 @@ export async function renderScreenshots(cfg: LoadedConfig, deviceKey: DeviceKey,
   const files = await Promise.all(
     jobs.map(async ({ scene, layout, secondScene, first }) => {
       console.log(`  frame ${scene.id}`);
-      const c = compose(layout, tile, cfg.theme, { screenOnly, geom });
+      const c = compose(layout, tile, cfg.theme, { screenOnly, geom, copyScale: spec.copyScale });
 
       const canvas = createCanvas(c.width, c.height);
       const ctx = canvas.getContext("2d");
@@ -97,7 +97,7 @@ export async function renderScreenshots(cfg: LoadedConfig, deviceKey: DeviceKey,
       }
 
       if (c.copy) {
-        drawCopy(ctx, c.copy, { width: c.designWidth, height: c.height }, cfg.theme, {
+        drawCopy(ctx, c.copy, { width: c.copy.typeWidth, height: c.height }, cfg.theme, {
           headline: pick(scene.headline, locale, scene.id, "headline"),
           subhead: scene.subhead ? pick(scene.subhead, locale, scene.id, "subhead") : undefined,
         });

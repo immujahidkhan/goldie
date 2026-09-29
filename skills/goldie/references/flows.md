@@ -16,11 +16,12 @@ and rebooted when its keyboard and locale preferences still need pinning.
 **Rule: `executionPrerequisite` and a leading `launch:` step are mutually
 exclusive.** A flow that starts with `launch:` launches and controls its own
 starting state, so `flow-execute` rejects any `executionPrerequisite` on it.
-Only give a flow `executionPrerequisite` when its first step is NOT `launch:`
-— i.e. it assumes a state a prior flow/segment left behind (preview segments
-after the first one are the normal case). Every screenshot scene flow and a
-preview's first segment starts with `launch:` and therefore must NOT have
-`executionPrerequisite`.
+Only give a flow `executionPrerequisite` when its first step is NOT `launch:`,
+meaning it assumes a state that goldie or a prior segment left behind. Every
+screenshot scene flow starts with `launch:` and has no
+`executionPrerequisite`. Every preview segment, the first one included, is
+the opposite: no `launch:` step, and an `executionPrerequisite` stating where
+it picks up (see "Preview segment flows" below).
 
 ```yaml
 executionPrerequisite: >-        # top-level, preview segments mostly: the state
@@ -93,6 +94,20 @@ own recording. So the first segment starts from a fresh launch already settled
 on the home screen, and every later segment continues exactly where the
 previous one ended. State the assumption in `executionPrerequisite` so the
 chain is auditable.
+
+No segment starts with `launch:`, the first one included. `launch:` restarts
+the app, so inside a recording it films the app closing, the home screen and
+a cold start. Open the first segment with an `await` on the home screen
+instead:
+
+```yaml
+executionPrerequisite: >-
+  App freshly restarted by goldie, settled on the home screen.
+steps:
+  - await: { visible: { text: All issues } }
+  - wait: 1200
+  - tap: { text: New issue }
+```
 
 Pacing rules:
 
